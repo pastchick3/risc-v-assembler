@@ -2,7 +2,8 @@
 extern crate lazy_static;
 
 use regex::Regex;
-use std::fs;
+use std::fs::{self, File};
+use std::io::prelude::*;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -27,20 +28,21 @@ lazy_static! {
 }
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
+#[structopt(name = "risc-v-assembler")]
 struct Opt {
-    #[structopt(long, parse(from_os_str))]
-    file: PathBuf,
+    #[structopt(parse(from_os_str))]
+    asm: PathBuf,
+
+    #[structopt(short, long, parse(from_os_str))]
+    obj: Option<PathBuf>,
 }
 
 fn main() {
     let opt = Opt::from_args();
-    let file = fs::read_to_string(opt.file).unwrap();
+    let asm = fs::read_to_string(&opt.asm).unwrap();
     let mut instructions = Vec::new();
-    for line in file.lines() {
+    for line in asm.lines() {
         if let Some(inst) = parse_ld(line) {
-            instructions.push(inst);
-        } else if let Some(inst) = parse_ld(line) {
             instructions.push(inst);
         } else if let Some(inst) = parse_sd(line) {
             instructions.push(inst);
@@ -58,19 +60,32 @@ fn main() {
             panic!("Invalid Instruction: `{}`", line);
         }
     }
+
+    let obj_path = match opt.obj {
+        Some(obj) => obj,
+        None => {
+            let mut path = opt.asm.clone();
+            path.set_extension("obj");
+            path
+        }
+    };
+    let mut obj = File::create(obj_path).unwrap();
+    for inst in instructions {
+        writeln!(&mut obj, "{:0>32b}", inst).unwrap();
+    }
 }
 
 fn parse_ld(line: &str) -> Option<u32> {
     if let Some(caps) = LD_REGEX.captures(line) {
-        let target: u32 = caps[1].parse().unwrap();
-        let offset: u32 = caps[2].parse().unwrap();
-        let base: u32 = caps[3].parse().unwrap();
+        let rd: u32 = caps[1].parse().unwrap();
+        let imm: u32 = caps[2].parse().unwrap();
+        let rs1: u32 = caps[3].parse().unwrap();
         let mut instruction: u32 = 0;
         instruction |= 0b0000011;
-        instruction |= target << 7;
+        instruction |= rd << 7;
         instruction |= 0b011 << 12;
-        instruction |= base << 15;
-        instruction |= offset << 20;
+        instruction |= rs1 << 15;
+        instruction |= imm << 20;
         Some(instruction)
     } else {
         None
@@ -79,16 +94,16 @@ fn parse_ld(line: &str) -> Option<u32> {
 
 fn parse_sd(line: &str) -> Option<u32> {
     if let Some(caps) = SD_REGEX.captures(line) {
-        let target: u32 = caps[1].parse().unwrap();
-        let offset: u32 = caps[2].parse().unwrap();
-        let base: u32 = caps[3].parse().unwrap();
+        let rs2: u32 = caps[1].parse().unwrap();
+        let imm: u32 = caps[2].parse().unwrap();
+        let rs1: u32 = caps[3].parse().unwrap();
         let mut instruction: u32 = 0;
         instruction |= 0b0100011;
-        instruction |= (offset & 0b11111) << 5;
+        instruction |= (imm & 0b00000000_00000000_00000000_00011111) << 7;
         instruction |= 0b011 << 12;
-        instruction |= target << 15;
-        instruction |= base << 20;
-        instruction |= (offset & !0b11111) << 25;
+        instruction |= rs1 << 15;
+        instruction |= rs2 << 20;
+        instruction |= (imm & 0b00000000_00000000_00001111_11100000) << 20;
         Some(instruction)
     } else {
         None
@@ -168,15 +183,62 @@ fn parse_beq(line: &str) -> Option<u32> {
         let rs2: u32 = caps[2].parse().unwrap();
         let imm: u32 = caps[3].parse().unwrap();
         let mut instruction: u32 = 0;
-        instruction |= 0b1100111;
+        instruction |= 0b1100011;
         instruction |= rs1 << 15;
         instruction |= rs2 << 20;
-        instruction |= (imm & 0b1111) << 8;
-        instruction |= (imm & 0b111110000) << 25;
-        instruction |= (imm & 0b10000000000) << 8;
-        instruction |= (imm & 0b100000000000) << 31;
+        instruction |= (imm & 0b00000000_00000000_00000000_00011110) << 7;
+        instruction |= (imm & 0b00000000_00000000_00000111_11100000) << 20;
+        instruction |= (imm & 0b00000000_00000000_00001000_00000000) >> 4;
+        instruction |= (imm & 0b00000000_00000000_00010000_00000000) << 19;
         Some(instruction)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ld() {
+        let instruction = parse_ld("ld x5, 40(x6)").unwrap();
+        assert_eq!(instruction, 0b000000101000_00110_011_00101_0000011);
+    }
+
+    #[test]
+    fn sd() {
+        let instruction = parse_sd("sd x5, 40(x6)").unwrap();
+        assert_eq!(instruction, 0b0000001_00101_00110_011_01000_0100011);
+    }
+
+    #[test]
+    fn and() {
+        let instruction = parse_and("and x5, x6, x7").unwrap();
+        assert_eq!(instruction, 0b0000000_00111_00110_111_00101_0110011);
+    }
+
+    #[test]
+    fn or() {
+        let instruction = parse_or("or x5, x6, x7").unwrap();
+        assert_eq!(instruction, 0b0000000_00111_00110_110_00101_0110011);
+    }
+
+    #[test]
+    fn add() {
+        let instruction = parse_add("add x5, x6, x7").unwrap();
+        assert_eq!(instruction, 0b0000000_00111_00110_000_00101_0110011);
+    }
+
+    #[test]
+    fn sub() {
+        let instruction = parse_sub("sub x5, x6, x7").unwrap();
+        assert_eq!(instruction, 0b0100000_00111_00110_000_00101_0110011);
+    }
+
+    #[test]
+    fn beq() {
+        let instruction = parse_beq("beq x5, x6, 2730").unwrap();
+        assert_eq!(instruction, 0b0010101_00110_00101_000_01011_1100011);
     }
 }

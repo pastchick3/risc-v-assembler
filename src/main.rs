@@ -42,7 +42,10 @@ fn main() {
     let asm = fs::read_to_string(&opt.asm).unwrap();
     let mut instructions = Vec::new();
     for line in asm.lines() {
-        if let Some(inst) = parse_ld(line) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        } else if let Some(inst) = parse_ld(line) {
             instructions.push(inst);
         } else if let Some(inst) = parse_sd(line) {
             instructions.push(inst);

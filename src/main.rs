@@ -35,6 +35,9 @@ struct Opt {
 
     #[structopt(short, long, parse(from_os_str))]
     obj: Option<PathBuf>,
+
+    #[structopt(long)]
+    padding: Option<usize>,
 }
 
 fn main() {
@@ -63,6 +66,12 @@ fn main() {
             panic!("Invalid Instruction: `{}`", line);
         }
     }
+
+    if let Some(size) = opt.padding {
+        while instructions.len() < size {
+            instructions.push(0);
+        }
+    } 
 
     let obj_path = match opt.obj {
         Some(obj) => obj,

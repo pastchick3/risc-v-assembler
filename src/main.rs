@@ -11,19 +11,22 @@ lazy_static! {
     static ref REG: &'static str = r"\s*x(\d)+\s*";
     static ref SEP: &'static str = r"\s*,\s*";
     static ref NUM: &'static str = r"\s*(\d+)\s*";
-    static ref LD_STR: String = format!(r"^\s*ld\s+{r}{s}{n}\({r}\)\s*$", r=*REG, s=*SEP, n=*NUM);
+    static ref COM: &'static str = r"(//.*)?";
+    static ref NOP_STR: String = format!(r"^\s*nop\s*{c}$", c=*COM);
+    static ref NOP_REGEX: Regex = Regex::new(&NOP_STR).unwrap(); // nop
+    static ref LD_STR: String = format!(r"^\s*ld\s+{r}{s}{n}\({r}\)\s*{c}$", r=*REG, s=*SEP, n=*NUM, c=*COM);
     static ref LD_REGEX: Regex = Regex::new(&LD_STR).unwrap(); // ld x5, 40(x6)
-    static ref SD_STR: String = format!(r"^\s*sd\s+{r}{s}{n}\({r}\)\s*$", r=*REG, s=*SEP, n=*NUM);
+    static ref SD_STR: String = format!(r"^\s*sd\s+{r}{s}{n}\({r}\)\s*{c}$", r=*REG, s=*SEP, n=*NUM, c=*COM);
     static ref SD_REGEX: Regex = Regex::new(&SD_STR).unwrap(); // sd x5, 40(x6)
-    static ref AND_STR: String = format!(r"^\s*and\s+{r}{s}{r}{s}{r}$", r=*REG, s=*SEP);
+    static ref AND_STR: String = format!(r"^\s*and\s+{r}{s}{r}{s}{r}{c}$", r=*REG, s=*SEP, c=*COM);
     static ref AND_REGEX: Regex = Regex::new(&AND_STR).unwrap(); // and x5, x6, x7
-    static ref OR_STR: String = format!(r"^\s*or\s+{r}{s}{r}{s}{r}$", r=*REG, s=*SEP);
+    static ref OR_STR: String = format!(r"^\s*or\s+{r}{s}{r}{s}{r}{c}$", r=*REG, s=*SEP, c=*COM);
     static ref OR_REGEX: Regex = Regex::new(&OR_STR).unwrap(); // or x5, x6, x7
-    static ref ADD_STR: String = format!(r"^\s*add\s+{r}{s}{r}{s}{r}$", r=*REG, s=*SEP);
+    static ref ADD_STR: String = format!(r"^\s*add\s+{r}{s}{r}{s}{r}{c}$", r=*REG, s=*SEP, c=*COM);
     static ref ADD_REGEX: Regex = Regex::new(&ADD_STR).unwrap(); // add x5, x6, x7
-    static ref SUB_STR: String = format!(r"^\s*sub\s+{r}{s}{r}{s}{r}$", r=*REG, s=*SEP);
+    static ref SUB_STR: String = format!(r"^\s*sub\s+{r}{s}{r}{s}{r}{c}$", r=*REG, s=*SEP, c=*COM);
     static ref SUB_REGEX: Regex = Regex::new(&SUB_STR).unwrap(); // sub x5, x6, x7
-    static ref BEQ_STR: String = format!(r"^\s*beq\s+{r}{s}{r}{s}{n}$", r=*REG, s=*SEP, n=*NUM);
+    static ref BEQ_STR: String = format!(r"^\s*beq\s+{r}{s}{r}{s}{n}{c}$", r=*REG, s=*SEP, n=*NUM, c=*COM);
     static ref BEQ_REGEX: Regex = Regex::new(&BEQ_STR).unwrap(); // beq x5, x6, 100
 }
 
@@ -48,7 +51,7 @@ fn main() {
         let line = line.trim();
         if line.is_empty() || line.starts_with("//") {
             continue;
-        } else if line == "nop" {
+        } else if NOP_REGEX.is_match(line) {
             instructions.push(0);
         } else if let Some(inst) = parse_ld(line) {
             instructions.push(inst);
@@ -73,7 +76,7 @@ fn main() {
         while instructions.len() < size {
             instructions.push(0);
         }
-    } 
+    }
 
     let obj_path = match opt.obj {
         Some(obj) => obj,

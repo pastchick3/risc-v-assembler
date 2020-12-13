@@ -252,11 +252,14 @@ fn transform_labels(
         .map(|(i, (mut inst, label))| {
             if let Some(label) = label {
                 if let Some(j) = labels.get(&label) {
-                    let imm: u32 = ((j - i) * 4).try_into().unwrap();
-                    inst |= (imm & 0b00000000_00000000_00000000_00011110) << 7;
-                    inst |= (imm & 0b00000000_00000000_00000111_11100000) << 20;
-                    inst |= (imm & 0b00000000_00000000_00001000_00000000) >> 4;
-                    inst |= (imm & 0b00000000_00000000_00010000_00000000) << 19;
+                    if i < *j {
+                        let imm: u32 = (j - i).try_into().unwrap();
+                        inst |= (imm & 0b00000000_00000000_00000000_00011111) << 7;
+                    } else {
+                        let imm: u32 = (i - j).try_into().unwrap();
+                        inst |= (imm & 0b00000000_00000000_00000000_00011111) << 7;
+                        inst |= 0b00000010_00000000_00000000_00000000;
+                    }
                     inst
                 } else {
                     panic!("Invalid Label: `{}`", &label);
@@ -315,16 +318,16 @@ mod tests {
         let mut labels = HashMap::new();
         labels.insert("Label".to_string(), 2);
         let instructions = transform_labels(instructions, labels);
-        assert_eq!(instructions[0], 0b0000000_00110_00101_000_01000_1100011);
+        assert_eq!(instructions[0], 0b0000000_00110_00101_000_00010_1100011);
     }
 
     #[test]
     fn blt() {
         let (inst, label) = parse_blt("blt x5, x6, Label").unwrap();
-        let instructions = vec![(inst, Some(label))];
+        let instructions = vec![(0, None), (0, None), (inst, Some(label))];
         let mut labels = HashMap::new();
-        labels.insert("Label".to_string(), 2);
+        labels.insert("Label".to_string(), 0);
         let instructions = transform_labels(instructions, labels);
-        assert_eq!(instructions[0], 0b0000000_00110_00101_100_01000_1100011);
+        assert_eq!(instructions[2], 0b0000001_00110_00101_100_00010_1100011);
     }
 }

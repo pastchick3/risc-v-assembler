@@ -2,6 +2,8 @@
 extern crate lazy_static;
 
 use regex::Regex;
+use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::PathBuf;
@@ -11,7 +13,8 @@ lazy_static! {
     static ref REG: &'static str = r"\s*x(\d)+\s*";
     static ref SEP: &'static str = r"\s*,\s*";
     static ref NUM: &'static str = r"\s*(\d+)\s*";
-    static ref COM: &'static str = r"(//.*)?";
+    static ref LAB: &'static str = r"\s*(\w+)\s*";
+    static ref COM: &'static str = r"\s*(//.*)?";
     static ref NOP_STR: String = format!(r"^\s*nop\s*{c}$", c=*COM);
     static ref NOP_REGEX: Regex = Regex::new(&NOP_STR).unwrap(); // nop
     static ref LD_STR: String = format!(r"^\s*ld\s+{r}{s}{n}\({r}\)\s*{c}$", r=*REG, s=*SEP, n=*NUM, c=*COM);
@@ -26,8 +29,10 @@ lazy_static! {
     static ref ADD_REGEX: Regex = Regex::new(&ADD_STR).unwrap(); // add x5, x6, x7
     static ref SUB_STR: String = format!(r"^\s*sub\s+{r}{s}{r}{s}{r}{c}$", r=*REG, s=*SEP, c=*COM);
     static ref SUB_REGEX: Regex = Regex::new(&SUB_STR).unwrap(); // sub x5, x6, x7
-    static ref BEQ_STR: String = format!(r"^\s*beq\s+{r}{s}{r}{s}{n}{c}$", r=*REG, s=*SEP, n=*NUM, c=*COM);
-    static ref BEQ_REGEX: Regex = Regex::new(&BEQ_STR).unwrap(); // beq x5, x6, 100
+    static ref BEQ_STR: String = format!(r"^\s*beq\s+{r}{s}{r}{s}{l}{c}$", r=*REG, s=*SEP, l=*LAB, c=*COM);
+    static ref BEQ_REGEX: Regex = Regex::new(&BEQ_STR).unwrap(); // beq x5, x6, Label
+    static ref LABEL_STR: String = format!(r"^{l}:{c}$", l=*LAB, c=*COM);
+    static ref LABEL_REGEX: Regex = Regex::new(&LABEL_STR).unwrap(); // Label:
 }
 
 #[derive(StructOpt, Debug)]
@@ -46,31 +51,36 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
     let asm = fs::read_to_string(&opt.asm).unwrap();
+    let mut labels = HashMap::new();
     let mut instructions = Vec::new();
     for line in asm.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with("//") {
             continue;
         } else if NOP_REGEX.is_match(line) {
-            instructions.push(0);
+            instructions.push((0, None));
         } else if let Some(inst) = parse_ld(line) {
-            instructions.push(inst);
+            instructions.push((inst, None));
         } else if let Some(inst) = parse_sd(line) {
-            instructions.push(inst);
+            instructions.push((inst, None));
         } else if let Some(inst) = parse_and(line) {
-            instructions.push(inst);
+            instructions.push((inst, None));
         } else if let Some(inst) = parse_or(line) {
-            instructions.push(inst);
+            instructions.push((inst, None));
         } else if let Some(inst) = parse_add(line) {
-            instructions.push(inst);
+            instructions.push((inst, None));
         } else if let Some(inst) = parse_sub(line) {
-            instructions.push(inst);
-        } else if let Some(inst) = parse_beq(line) {
-            instructions.push(inst);
+            instructions.push((inst, None));
+        } else if let Some((inst, label)) = parse_beq(line) {
+            instructions.push((inst, Some(label)));
+        } else if let Some(caps) = LABEL_REGEX.captures(line) {
+            labels.insert(caps[1].to_string(), instructions.len());
         } else {
             panic!("Invalid Instruction: `{}`", line);
         }
     }
+
+    let mut instructions = transform_labels(instructions, labels);
 
     if let Some(size) = opt.padding {
         while instructions.len() < size {
@@ -194,23 +204,45 @@ fn parse_sub(line: &str) -> Option<u32> {
     }
 }
 
-fn parse_beq(line: &str) -> Option<u32> {
+fn parse_beq(line: &str) -> Option<(u32, String)> {
     if let Some(caps) = BEQ_REGEX.captures(line) {
         let rs1: u32 = caps[1].parse().unwrap();
         let rs2: u32 = caps[2].parse().unwrap();
-        let imm: u32 = caps[3].parse().unwrap();
+        let label: String = caps[3].to_string();
         let mut instruction: u32 = 0;
         instruction |= 0b1100011;
         instruction |= rs1 << 15;
         instruction |= rs2 << 20;
-        instruction |= (imm & 0b00000000_00000000_00000000_00011110) << 7;
-        instruction |= (imm & 0b00000000_00000000_00000111_11100000) << 20;
-        instruction |= (imm & 0b00000000_00000000_00001000_00000000) >> 4;
-        instruction |= (imm & 0b00000000_00000000_00010000_00000000) << 19;
-        Some(instruction)
+        Some((instruction, label))
     } else {
         None
     }
+}
+
+fn transform_labels(
+    instructions: Vec<(u32, Option<String>)>,
+    labels: HashMap<String, usize>,
+) -> Vec<u32> {
+    instructions
+        .into_iter()
+        .enumerate()
+        .map(|(i, (mut inst, label))| {
+            if let Some(label) = label {
+                if let Some(j) = labels.get(&label) {
+                    let imm: u32 = ((j - i) * 4).try_into().unwrap();
+                    inst |= (imm & 0b00000000_00000000_00000000_00011110) << 7;
+                    inst |= (imm & 0b00000000_00000000_00000111_11100000) << 20;
+                    inst |= (imm & 0b00000000_00000000_00001000_00000000) >> 4;
+                    inst |= (imm & 0b00000000_00000000_00010000_00000000) << 19;
+                    inst
+                } else {
+                    panic!("Invalid Label: `{}`", &label);
+                }
+            } else {
+                inst
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -255,7 +287,11 @@ mod tests {
 
     #[test]
     fn beq() {
-        let instruction = parse_beq("beq x5, x6, 2730").unwrap();
-        assert_eq!(instruction, 0b0010101_00110_00101_000_01011_1100011);
+        let (inst, label) = parse_beq("beq x5, x6, Label").unwrap();
+        let instructions = vec![(inst, Some(label))];
+        let mut labels = HashMap::new();
+        labels.insert("Label".to_string(), 2);
+        let instructions = transform_labels(instructions, labels);
+        assert_eq!(instructions[0], 0b0000000_00110_00101_000_01000_1100011);
     }
 }

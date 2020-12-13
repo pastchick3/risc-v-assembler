@@ -31,6 +31,8 @@ lazy_static! {
     static ref SUB_REGEX: Regex = Regex::new(&SUB_STR).unwrap(); // sub x5, x6, x7
     static ref BEQ_STR: String = format!(r"^\s*beq\s+{r}{s}{r}{s}{l}{c}$", r=*REG, s=*SEP, l=*LAB, c=*COM);
     static ref BEQ_REGEX: Regex = Regex::new(&BEQ_STR).unwrap(); // beq x5, x6, Label
+    static ref BLT_STR: String = format!(r"^\s*blt\s+{r}{s}{r}{s}{l}{c}$", r=*REG, s=*SEP, l=*LAB, c=*COM);
+    static ref BLT_REGEX: Regex = Regex::new(&BLT_STR).unwrap(); // blt x5, x6, Label
     static ref LABEL_STR: String = format!(r"^{l}:{c}$", l=*LAB, c=*COM);
     static ref LABEL_REGEX: Regex = Regex::new(&LABEL_STR).unwrap(); // Label:
 }
@@ -73,6 +75,8 @@ fn main() {
             instructions.push((inst, None));
         } else if let Some((inst, label)) = parse_beq(line) {
             instructions.push((inst, Some(label)));
+        } else if let Some((inst, label)) = parse_blt(line) {
+            instructions.push((inst, Some(label)));
         } else if let Some(caps) = LABEL_REGEX.captures(line) {
             labels.insert(caps[1].to_string(), instructions.len());
         } else {
@@ -83,6 +87,9 @@ fn main() {
     let mut instructions = transform_labels(instructions, labels);
 
     if let Some(size) = opt.padding {
+        if instructions.len() > size {
+            eprintln!("Warning: the padding length is smaller than the number of instructions.")
+        }
         while instructions.len() < size {
             instructions.push(0);
         }
@@ -219,6 +226,22 @@ fn parse_beq(line: &str) -> Option<(u32, String)> {
     }
 }
 
+fn parse_blt(line: &str) -> Option<(u32, String)> {
+    if let Some(caps) = BLT_REGEX.captures(line) {
+        let rs1: u32 = caps[1].parse().unwrap();
+        let rs2: u32 = caps[2].parse().unwrap();
+        let label: String = caps[3].to_string();
+        let mut instruction: u32 = 0;
+        instruction |= 0b1100011;
+        instruction |= 0b100 << 12;
+        instruction |= rs1 << 15;
+        instruction |= rs2 << 20;
+        Some((instruction, label))
+    } else {
+        None
+    }
+}
+
 fn transform_labels(
     instructions: Vec<(u32, Option<String>)>,
     labels: HashMap<String, usize>,
@@ -293,5 +316,15 @@ mod tests {
         labels.insert("Label".to_string(), 2);
         let instructions = transform_labels(instructions, labels);
         assert_eq!(instructions[0], 0b0000000_00110_00101_000_01000_1100011);
+    }
+
+    #[test]
+    fn blt() {
+        let (inst, label) = parse_blt("blt x5, x6, Label").unwrap();
+        let instructions = vec![(inst, Some(label))];
+        let mut labels = HashMap::new();
+        labels.insert("Label".to_string(), 2);
+        let instructions = transform_labels(instructions, labels);
+        assert_eq!(instructions[0], 0b0000000_00110_00101_100_01000_1100011);
     }
 }

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 lazy_static! {
-    static ref REG: &'static str = r"\s*x(\d)+\s*";
+    static ref REG: &'static str = r"\s*x(\d+)\s*";
     static ref SEP: &'static str = r"\s*,\s*";
     static ref NUM: &'static str = r"\s*(\d+)\s*";
     static ref LAB: &'static str = r"\s*(\w+)\s*";
@@ -277,8 +277,8 @@ mod tests {
 
     #[test]
     fn ld() {
-        let instruction = parse_ld("ld x5, 40(x6)").unwrap();
-        assert_eq!(instruction, 0b000000101000_00110_011_00101_0000011);
+        let instruction = parse_ld("ld x25, 40(x6)").unwrap();
+        assert_eq!(instruction, 0b000000101000_00110_011_11001_0000011);
     }
 
     #[test]
